@@ -9,6 +9,7 @@ import uuid
 from scene import Scene, GaussianModel
 from tqdm import tqdm
 from utils.image_utils import psnr
+import torchvision
 from argparse import ArgumentParser, Namespace
 from arguments import ModelParams, PipelineParams, OptimizationParams
 from utils.pose_utils import get_camera_from_tensor
@@ -146,6 +147,10 @@ def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoi
     test_cams_init = scene.getTestCameras().copy()
     save_pose_path = os.path.join(scene.model_path, "pose")
     os.makedirs(save_pose_path, exist_ok=True)
+    # Optional: export transient heatmaps/masks
+    if args.use_masks and getattr(args, 'export_transients', False):
+        transient_output_root = args.export_transients_dir if getattr(args, 'export_transients_dir', None) else os.path.join(scene.model_path, "transient_masks")
+        os.makedirs(transient_output_root, exist_ok=True)
     bg_color = [1, 1, 1] if dataset.white_background else [0, 0, 0]
     background = torch.tensor(bg_color, dtype=torch.float32, device="cuda")
 
@@ -209,6 +214,17 @@ def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoi
             instance_threshold = args.preset_instance_threshold
             image_name = viewpoint_cam.image_name
             heatmap_norm, heatmap_binary = compute_instance_losses(combined_loss, label_map_for_image, instance_threshold, iteration, image_name, args)
+            # Export per-image transient maps if requested
+            if getattr(args, 'export_transients', False) and iteration >= args.mask_start_iter:
+                try:
+                    out_base = os.path.join(transient_output_root, image_name)
+                    hm = heatmap_norm.detach().clamp(0, 1).unsqueeze(0).cpu()
+                    torchvision.utils.save_image(hm, out_base + "_heatmap.png")
+                    if getattr(args, 'export_transients_binary', False):
+                        hb = heatmap_binary.detach().unsqueeze(0).cpu()
+                        torchvision.utils.save_image(hb, out_base + "_binary.png")
+                except Exception as _e:
+                    pass
 
         if args.use_masks and iteration > args.mask_start_iter:
                 loss = (1.0 - opt.lambda_dssim) * (Ll1 * heatmap_binary).mean() + opt.lambda_dssim * (ssim_value * heatmap_binary).mean()
@@ -322,6 +338,9 @@ if __name__ == "__main__":
     parser.add_argument("--sam2_ckpt", type=str, default="checkpoints/sam2_hiera_large.pt")
     parser.add_argument("--sam2_cfg", type=str, default="sam2_hiera_l.yaml")
     parser.add_argument("--schedule_densify_grad_threshold", action="store_true")
+    parser.add_argument('--export_transients', action='store_true')
+    parser.add_argument('--export_transients_binary', action='store_true')
+    parser.add_argument('--export_transients_dir', type=str, default=None)
 
     args = parser.parse_args(sys.argv[1:])
     args.save_iterations.append(args.iterations)

@@ -1,5 +1,6 @@
 import os
 import torch
+import argparse as _argparse
 import numpy as np
 import argparse
 import time
@@ -165,7 +166,14 @@ if __name__ == '__main__':
     img_base_path = args.img_base_path
     img_folder_path = os.path.join(img_base_path, "images")
     os.makedirs(img_folder_path, exist_ok=True)
-    model = AsymmetricCroCo3DStereo.from_pretrained(model_path).to(device)
+    try:
+        # Torch 2.6 safe loading: allowlist argparse.Namespace which is present in some checkpoints
+        from torch.serialization import safe_globals
+        with safe_globals([_argparse.Namespace]):
+            model = AsymmetricCroCo3DStereo.from_pretrained(model_path).to(device)
+    except Exception:
+        # Fallback to the original code path
+        model = AsymmetricCroCo3DStereo.from_pretrained(model_path).to(device)
 
     train_img_list = load_image_list(os.path.join(img_base_path, 'train_list.txt'))
     print("train_img_list", train_img_list)
